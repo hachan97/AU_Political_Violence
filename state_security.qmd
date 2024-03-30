@@ -40,12 +40,9 @@ ACLED Key: OgBUHSkEFB\*dga7JNLzl
 ```{r}
 # X-variables
 df_SP_raw <- read_dta(here("data/Mehrl & Choulis (2023) - Secret Police/secret_police_repression_replication data.dta")) # 1950 - 2020
-df_BergSF_raw <- read_dta(here("data/Berg (2020) - SF/PSGD_Civil War Recurrence Replication Data_Final.dta"))
-df_SSFD_raw <- read_dta(here("data/De Bruin (2020) - SSFD/SSFD_secforce_oct2019.dta")) # 1960 - 2010
 
 # Y-variables
 df_ICEWS_raw  <- read_dta(here("data/Bagozzi (2021) - ICEWS/eventdata_icews_threedigit.dta")) # 1994 - 2016
-#df_ACLED_raw <- read.csv(here("data/ACLED/ACLED_State_Forces.csv")) # 1997 - 2023 
 ```
 
 # Pre-process Data
@@ -124,14 +121,15 @@ p4 <- ggplot(merged_df, aes(x = factor(cbcount), y = v_Indiscrim)) +
 descriptive_boxplot <- cowplot::plot_grid(p1, p2, p3, p4, ncol = 2)
 descriptive_boxplot
 ```
+
 ```{r}
 ggsave("Descriptive_Plot.jpg", descriptive_boxplot)
 ```
 
-
 # Descriptive Table
 
 Main Variables
+
 ```{r}
 # Select the variables for which you want to calculate descriptive statistics 
 variables <- c("ccode","year","secretpol_revised","cbcount",
@@ -153,6 +151,7 @@ descriptive_table_Main
 ```
 
 Dependent Variables
+
 ```{r}
 # Select the variables for which you want to calculate descriptive statistics 
 variables <- c("govcit_CAMEO170", "govcit_CAMEO173", "govcit_CAMEO174", "govcit_CAMEO181", "govcit_CAMEO182", "govcit_CAMEO185", "govcit_CAMEO186", "govcit_CAMEO171", "govcit_CAMEO175", "govcit_CAMEO180", "govcit_CAMEO184", "govcit_CAMEO190", "govcit_CAMEO191", "govcit_CAMEO192", "govcit_CAMEO193", "govcit_CAMEO194", "govcit_CAMEO195", "govcit_CAMEO196", "govcit_CAMEO200", "govcit_CAMEO201", "govcit_CAMEO202", "govcit_CAMEO203")
@@ -281,7 +280,6 @@ summary(m4_S)
 summary(m4_I)
 ```
 
-
 # Table
 
 ```{r}
@@ -337,10 +335,6 @@ Reg_table_A3 <- stargazer(m4_S_R, m4_I_R,
                         
 ```
 
-
-
-
-
 # Plots - Type A
 
 ```{r}
@@ -351,7 +345,6 @@ quants_mean_fun <-  function(x) {
 ```
 
 ## Selective
-
 
 ```{r Sim_setx}
 nsim = 1000
@@ -378,7 +371,6 @@ ExpValues_high_m4_S <- sim_setx(c_obj_m4_S,
                                 verbose = FALSE)
 saveRDS(ExpValues_high_m4_S, file = "ExpValues_high_m4_S.RDS")
 ```
-
 
 ```{r Sim_setx}
 ExpValues_low_m4_S <- readRDS("ExpValues_low_m4_S.RDS")
@@ -471,6 +463,7 @@ ExpValues_high_m4_I <- sim_setx(c_obj_m4_I,
                                 verbose = FALSE)
 saveRDS(ExpValues_high_m4_I, file = "ExpValues_high_m4_I.RDS")
 ```
+
 ```{r}
 ExpValues_low_m4_I <- readRDS("ExpValues_low_m4_I.RDS")
 ExpValues_high_m4_I <- readRDS("ExpValues_high_m4_I.RDS")
@@ -515,6 +508,7 @@ plot_m4_I <- ggplot(plot_data2, aes(x = secretpol_revised)) +
   theme(legend.position = "bottom")
 plot_m4_I
 ```
+
 ```{r}
 # Create the histogram plot
 hist_plot2 <- ggplot(merged_df, aes(x = secretpol_revised)) +
@@ -536,11 +530,14 @@ combined_plot2
 ```
 
 ## Summary A1
+
 ```{r}
 combinedplot_TypeA <- cowplot::plot_grid(plot_m4_S, plot_m4_I, ncol = 2)
 combinedplot_TypeA
 ```
+
 ## Summary A2
+
 ```{r}
 plot_data_A <- merge(plot_data1, plot_data2, by = "secretpol_revised")
 
@@ -588,8 +585,8 @@ final_plot_A <- cowplot::plot_grid(plot_A, hist_plot2,
 final_plot_A
 ```
 
-
 # Plots - Type B
+
 ```{r}
 # Extract the mean values
 quants_mean_fun <-  function(x) {
@@ -625,7 +622,6 @@ ExpValues_m4_S_high <- sim_setx(c_obj_m4_S,
                                 verbose = FALSE)
 saveRDS(ExpValues_m4_S_high, file = "ExpValues_m4_S_high.RDS")
 ```
-
 
 ```{r Sim_setx}
 ExpValues_m4_S_low <- readRDS("ExpValues_m4_S_low.RDS")
@@ -719,7 +715,6 @@ ExpValues_m4_I_high <- sim_setx(c_obj_m4_I,
 saveRDS(ExpValues_m4_I_high, file = "ExpValues_m4_I_high.RDS")
 ```
 
-
 ```{r Sim_setx}
 ExpValues_m4_I_low <- readRDS("ExpValues_m4_I_low.RDS")
 ExpValues_m4_I_high <- readRDS("ExpValues_m4_I_high.RDS")
@@ -791,6 +786,7 @@ combinedplot_TypeB
 ```
 
 ## Summary B2
+
 ```{r}
 plot_data_B <- merge(plot_data3, plot_data4, by = "cbcount_seq")
 
@@ -837,6 +833,7 @@ final_plot_B <- cowplot::plot_grid(plot_B, hist_plot4,
 
 final_plot_B
 ```
+
 # Plot - Type C1
 
 ```{r}
@@ -852,7 +849,9 @@ plot_grid(S_low_cbcount, S_high_cbcount,
 final_plot_C <- cowplot::plot_grid(S_low_cbcount, S_high_cbcount,
                                    I_low_cbcount, I_high_cbcount, ncol = 2)
 ```
+
 # Plot - Type C2
+
 ```{r}
 df_ExpValues_low_m4_S <- as.data.frame(ExpValues_low_m4_S) %>% 
   rename(S_0_cb_low = `secretpol_revised = 0`,
@@ -985,7 +984,6 @@ Boxplot_final2 <- df_ExpValues %>%
 ggsave("Boxplot_final2.jpg", Boxplot_final2, width = 10, height = 5)
 ```
 
-
 ```{r}
 
 plot_data1_long <- plot_data1 %>%
@@ -1006,7 +1004,6 @@ ggplot(plot_data1_long, aes(y = X1)) +
   labs(title = "Boxplot of Data", y = "Values")
 
 ```
-
 
 # SAVE
 

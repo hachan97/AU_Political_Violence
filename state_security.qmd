@@ -1,0 +1,1031 @@
+---
+title: "state_security"
+author: "Bryan Chan"
+format: html
+editor: visual
+---
+
+# Setup
+
+```{r Setup}
+# Codes to install the need packaged and it'll output the package(s) that may have failed to load
+knitr::opts_chunk$set(echo = TRUE)
+p_needed <-
+  c("tidyverse",
+    "tidymodels",     # A collection of packages for machine learning 
+    "haven",          # To open .dta datasets
+    "here", 
+    "stargazer",
+    "cowplot",        # Arrange plots in a grid
+    "clarify",        # Gary King's Simulation Package
+    "countrycode",    # Country Code 
+    "plm",             # For Panel Data regression 
+    "sjPlot",
+    "ggeffects"
+    )
+
+packages <- rownames(installed.packages())
+p_to_install <- p_needed[!(p_needed %in% packages)]
+
+if (length(p_to_install) > 0) {
+  install.packages(p_to_install)
+}
+sapply(p_needed, require, character.only = TRUE)
+```
+
+# Load Datasets
+
+ACLED Key: OgBUHSkEFB\*dga7JNLzl
+
+```{r}
+# X-variables
+df_SP_raw <- read_dta(here("data/Mehrl & Choulis (2023) - Secret Police/secret_police_repression_replication data.dta")) # 1950 - 2020
+df_BergSF_raw <- read_dta(here("data/Berg (2020) - SF/PSGD_Civil War Recurrence Replication Data_Final.dta"))
+df_SSFD_raw <- read_dta(here("data/De Bruin (2020) - SSFD/SSFD_secforce_oct2019.dta")) # 1960 - 2010
+
+# Y-variables
+df_ICEWS_raw  <- read_dta(here("data/Bagozzi (2021) - ICEWS/eventdata_icews_threedigit.dta")) # 1994 - 2016
+#df_ACLED_raw <- read.csv(here("data/ACLED/ACLED_State_Forces.csv")) # 1997 - 2023 
+```
+
+# Pre-process Data
+
+## x: SP
+
+```{r}
+#colnames(df_SP_raw)
+
+df_SP <- df_SP_raw %>% 
+  filter(year >= 1994 & year <= 2016) %>%
+  mutate(ln_pop = log(pop),
+         ln_gdppc = log(gdp_pc)) %>% 
+  select(ccode, year,         
+         secretpol_revised, cbcount, 
+         ln_pop, ln_gdppc, regtype, attempt,
+         gwf_party, gwf_military, gwf_personal)
+```
+
+## y: ICEWS
+
+```{r}
+df_ICEWS <- df_ICEWS_raw %>%
+  mutate(
+    v_Selective = rowSums(select(., govcit_CAMEO170, govcit_CAMEO173, govcit_CAMEO174, 
+                                 govcit_CAMEO181, govcit_CAMEO182, govcit_CAMEO185, govcit_CAMEO186) ),
+    v_Indiscrim = rowSums(select(., govcit_CAMEO171, govcit_CAMEO175, 
+                                 govcit_CAMEO180,govcit_CAMEO184,
+                                 starts_with("govcit_CAMEO19"), 
+                                 govcit_CAMEO200, govcit_CAMEO201, govcit_CAMEO202, govcit_CAMEO203) )    ) %>% 
+  select(cowcode, year, v_Selective, v_Indiscrim,
+         govcit_CAMEO170, govcit_CAMEO173, govcit_CAMEO174, 
+         govcit_CAMEO181, govcit_CAMEO182, govcit_CAMEO185, govcit_CAMEO186,
+         govcit_CAMEO171, govcit_CAMEO175, govcit_CAMEO180,govcit_CAMEO184,
+         starts_with("govcit_CAMEO19"),
+         govcit_CAMEO200, govcit_CAMEO201, govcit_CAMEO202, govcit_CAMEO203 )
+```
+
+## Final Datasets
+
+```{r}
+# Data for Main Analysis
+merged_df <- left_join(df_SP, df_ICEWS,
+                       by = c("ccode" = "cowcode",
+                              "year" = "year")) %>%
+  filter(complete.cases(.))
+
+final_df <- pdata.frame(merged_df, index = c("ccode", "year"))
+```
+
+# Descriptive Plots
+
+```{r}
+# Create box plot
+p1 <- ggplot(merged_df, aes(x = factor(secretpol_revised), y = v_Selective)) +
+  geom_boxplot() +
+  labs(y = "Selective Repression Events")+
+  scale_x_discrete(labels = c("No secret police", "Secret Police"))+
+  theme(axis.title.x = element_blank())
+
+p2 <- ggplot(merged_df, aes(x = factor(secretpol_revised), y = v_Indiscrim)) +
+  geom_boxplot() +
+  labs(y = "Indiscriminate Repression Events")+
+  scale_x_discrete(labels = c("No secret police", "Secret Police"))+
+  theme(axis.title.x = element_blank())
+
+p3 <- ggplot(merged_df, aes(x = factor(cbcount), y = v_Selective)) +
+  geom_boxplot() +
+  labs(x = "No. of Counterbalance", y = "Selective Repression Events")
+
+p4 <- ggplot(merged_df, aes(x = factor(cbcount), y = v_Indiscrim)) +
+  geom_boxplot() +
+  labs(x = "No. of Counterbalance", y = "Indiscriminate Repression Events")
+
+# Combine plots using facet_grid
+descriptive_boxplot <- cowplot::plot_grid(p1, p2, p3, p4, ncol = 2)
+descriptive_boxplot
+```
+```{r}
+ggsave("Descriptive_Plot.jpg", descriptive_boxplot)
+```
+
+
+# Descriptive Table
+
+Main Variables
+```{r}
+# Select the variables for which you want to calculate descriptive statistics 
+variables <- c("ccode","year","secretpol_revised","cbcount",
+               "ln_pop","ln_gdppc","regtype","attempt",
+               "v_Selective","v_Indiscrim")
+
+# Calculate descriptive statistics 
+summary_stats <- sapply(merged_df[, variables], function(x) {   
+  c(mean(x), sd(x), min(x),      
+    quantile(x, probs = c(0.25, 0.5, 0.75)),      
+    max(x)) })  
+
+# Create a data frame with the descriptive statistics 
+descriptive_table_Main <- data.frame(t(summary_stats)) 
+
+names(descriptive_table_Main) <- c("Mean","Std.Dev", "Minimum", "1st Quartile", "Median", "3rd Quartile", "Maximum")  
+
+descriptive_table_Main 
+```
+
+Dependent Variables
+```{r}
+# Select the variables for which you want to calculate descriptive statistics 
+variables <- c("govcit_CAMEO170", "govcit_CAMEO173", "govcit_CAMEO174", "govcit_CAMEO181", "govcit_CAMEO182", "govcit_CAMEO185", "govcit_CAMEO186", "govcit_CAMEO171", "govcit_CAMEO175", "govcit_CAMEO180", "govcit_CAMEO184", "govcit_CAMEO190", "govcit_CAMEO191", "govcit_CAMEO192", "govcit_CAMEO193", "govcit_CAMEO194", "govcit_CAMEO195", "govcit_CAMEO196", "govcit_CAMEO200", "govcit_CAMEO201", "govcit_CAMEO202", "govcit_CAMEO203")
+
+# Calculate descriptive statistics 
+summary_stats <- sapply(merged_df[, variables], function(x) {   
+  c(mean(x), sd(x), min(x),      
+    quantile(x, probs = c(0.25, 0.5, 0.75)),      
+    max(x)) })  
+
+# Create a data frame with the descriptive statistics 
+descriptive_table_Indis <- data.frame(t(summary_stats)) 
+
+names(descriptive_table_Indis) <- c("Mean","Std.Dev", "Minimum", "1st Quartile", "Median", "3rd Quartile", "Maximum")  
+
+descriptive_table_Indis 
+```
+
+# Models
+
+```{r}
+colnames(final_df)
+
+# Model 1: Bivariate model
+m1_S <- lm(v_Selective ~ secretpol_revised + cbcount,
+         data = final_df)
+
+m1_I <- lm(v_Indiscrim ~ secretpol_revised + cbcount,
+         data = final_df)
+
+# Model 2: Country-fixed effects 
+m2_S <- plm(v_Selective ~ secretpol_revised + cbcount, 
+            data = final_df, 
+            model = "within", effect = "individual")
+
+m2_I <- plm(v_Indiscrim ~ secretpol_revised + cbcount, 
+            data = final_df, 
+            model = "within", effect = "individual")
+
+# Model 3: Add Interaction 
+m3_S <- plm(v_Selective ~ secretpol_revised + cbcount
+            + secretpol_revised*cbcount, 
+            data = final_df, 
+            model = "within", effect = "individual")
+
+m3_I <- plm(v_Indiscrim ~ secretpol_revised + cbcount
+            + secretpol_revised*cbcount, 
+            data = final_df, 
+            model = "within", effect = "individual")
+
+# Model 4: Add Control Variables 
+m4_S <- plm(v_Selective ~ secretpol_revised + cbcount
+            + secretpol_revised*cbcount
+            + ln_pop + ln_gdppc + regtype + attempt, 
+            data = final_df, 
+            model = "within", effect = "individual")
+
+m4_I <- plm(v_Indiscrim ~ secretpol_revised + cbcount
+            + secretpol_revised*cbcount
+            + ln_pop + ln_gdppc + regtype + attempt, 
+            data = final_df, 
+            model = "within", effect = "individual")
+
+
+# Model 5_R: CAMEO Specifics (v_Indiscrim)
+mI_171 <- plm(govcit_CAMEO171 ~ secretpol_revised + cbcount
+            + secretpol_revised*cbcount
+            + ln_pop + ln_gdppc + regtype + attempt, 
+            data = final_df, 
+            model = "within", effect = "individual")
+
+mI_175 <- plm(govcit_CAMEO175 ~ secretpol_revised + cbcount
+            + secretpol_revised*cbcount
+            + ln_pop + ln_gdppc + regtype + attempt, 
+            data = final_df, 
+            model = "within", effect = "individual")
+
+mI_180 <- plm(govcit_CAMEO180 ~ secretpol_revised + cbcount
+            + secretpol_revised*cbcount
+            + ln_pop + ln_gdppc + regtype + attempt, 
+            data = final_df, 
+            model = "within", effect = "individual")
+
+mI_184 <- plm(govcit_CAMEO184 ~ secretpol_revised + cbcount
+            + secretpol_revised*cbcount
+            + ln_pop + ln_gdppc + regtype + attempt, 
+            data = final_df, 
+            model = "within", effect = "individual")
+
+# Model 6_R: Twoway Fixed Effects
+m4_S_T <- plm(v_Selective ~ secretpol_revised + cbcount
+            + secretpol_revised*cbcount
+            + ln_pop + ln_gdppc + regtype + attempt, 
+            data = final_df, 
+            model = "within", effect = "twoways")
+
+m4_I_T <- plm(v_Indiscrim ~ secretpol_revised + cbcount
+            + secretpol_revised*cbcount
+            + ln_pop + ln_gdppc + regtype + attempt, 
+            data = final_df, 
+            model = "within", effect = "twoways")
+
+
+# Model 7_R: Alternative Regime Controls
+m4_S_R <- plm(v_Selective ~ secretpol_revised + cbcount
+            + secretpol_revised*cbcount
+            + ln_pop + ln_gdppc + attempt
+            + gwf_personal + gwf_military, 
+            data = final_df, 
+            model = "within", effect = "individual")
+
+m4_I_R <- plm(v_Indiscrim ~ secretpol_revised + cbcount
+            + secretpol_revised*cbcount
+            + ln_pop + ln_gdppc + attempt
+            + gwf_personal + gwf_military, 
+            data = final_df, 
+            model = "within", effect = "individual")
+
+
+
+
+```
+
+```{r}
+summary(m4_S)
+summary(m4_I)
+```
+
+
+# Table
+
+```{r}
+
+Reg_table_1 <- stargazer(m2_S, m2_I,
+                         m3_S, m3_I,
+                         m4_S, m4_I,
+                        type = "latex",
+                        covariate.labels = c("Secret Police", "Counterbalance", "ln Population", "ln GPD p.c.", 
+                                             "Regime", "Coup Attempt",
+                                             "Interaction"),
+                        column.labels = c("Selective", "Indiscriminate",
+                                          "Selective", "Indiscriminate",
+                                          "Selective", "Indiscriminate"),
+                        dep.var.caption = "Repression Pattern",
+                        omit = "ccode",
+                        omit.stat = c("ser", "f"))
+
+
+Reg_table_A1 <- stargazer(mI_171, mI_175, mI_180, mI_184,
+                        type = "latex",
+                        covariate.labels = c("Secret Police", "Counterbalance", "ln Population", "ln GPD p.c.", 
+                                             "Regime", "Coup Attempt",
+                                             "Interaction"),
+                        column.labels = c("Property Damage", 
+                                          "Collective Actions",
+                                          "Unconventional Violence",
+                                          "Human Shield"),
+                        dep.var.caption = "Indiscriminate Repression Events",
+                        omit.stat = c("ser", "f"))
+
+Reg_table_2 <- stargazer(m4_S_T, m4_I_T,
+                        type = "latex",
+                        covariate.labels = c("Secret Police", "Counterbalance", "ln Population", "ln GPD p.c.", 
+                                             "Regime", "Coup Attempt",
+                                             "Interaction"),
+                        column.labels = c("Selective", "Indiscriminate"),
+                        dep.var.caption = "Repression Pattern",
+                        omit = "ccode",
+                        omit.stat = c("ser", "f"))
+
+
+Reg_table_A3 <- stargazer(m4_S_R, m4_I_R,
+                        type = "latex",
+                        covariate.labels = c("Secret Police", "Counterbalance", "ln Population", "ln GPD p.c.", 
+                                             "Coup Attempt",
+                                             "Personalist Regimes", "Military Regime",
+                                             "Interaction"),
+                        column.labels = c("Selective", "Indiscriminate"),
+                        dep.var.caption = "Repression Pattern",
+                        omit.stat = c("ser", "f"))
+
+                        
+```
+
+
+
+
+
+# Plots - Type A
+
+```{r}
+# Extract the mean values
+quants_mean_fun <-  function(x) {
+  c(quants = quantile(x, probs = c(0.025, 0.975)),
+    mean = mean(x)) }
+```
+
+## Selective
+
+
+```{r Sim_setx}
+nsim = 1000
+secretpol_revised_seq <- c(0,1)
+
+coef_m4_S <- coef(m4_S)
+vcov_m4_S <- vcov(m4_S)
+c_obj_m4_S <- sim(fit = m4_S, n= nsim, vcov = vcov_m4_S, coefs= coef_m4_S)
+
+# Define the values for the scenario
+low_cbcount_T <- 0.1*max(merged_df$cbcount)
+high_cbcount_T <- 0.9*max(merged_df$cbcount)
+
+# Scenarios
+ExpValues_low_m4_S <- sim_setx(c_obj_m4_S, 
+                               x = list(secretpol_revised = secretpol_revised_seq,
+                                        cbcount = low_cbcount_T),
+                               verbose = FALSE)
+saveRDS(ExpValues_low_m4_S, file = "ExpValues_low_m4_S.RDS")
+
+ExpValues_high_m4_S <- sim_setx(c_obj_m4_S,
+                                x = list(secretpol_revised = secretpol_revised_seq,
+                                         cbcount = high_cbcount_T),
+                                verbose = FALSE)
+saveRDS(ExpValues_high_m4_S, file = "ExpValues_high_m4_S.RDS")
+```
+
+
+```{r Sim_setx}
+ExpValues_low_m4_S <- readRDS("ExpValues_low_m4_S.RDS")
+ExpValues_high_m4_S <- readRDS("ExpValues_high_m4_S.RDS")
+
+
+# Quantiles, we again use apply and our quants.mean.fun
+quants_low <- apply(ExpValues_low_m4_S, 2, quants_mean_fun) #Blue
+quants_high <- apply(ExpValues_high_m4_S, 2, quants_mean_fun) #Red
+
+# Create data frame for plotting
+plot_data1 <- data.frame(secretpol_revised_seq, 
+                        quants_low[3,], 
+                        quants_high[3,],
+                        quants_low[1 ,],
+                        quants_low[2 ,],
+                        quants_high[1 ,],
+                        quants_high[2 ,])
+
+# Rename the columns
+colnames(plot_data1) <- c("secretpol_revised", "m4_S_EY_cbcount_low", "m4_S_EY_cbcount_high",
+                         "m4_S_CI_cbcount_low_1", "m4_S_CI_cbcount_low_2",
+                         "m4_S_CI_cbcount_high_1", "m4_S_CI_cbcount_high_2")
+
+# Plot using ggplot
+plot_m4_S <- ggplot(plot_data1, aes(x = secretpol_revised)) +
+  geom_line(aes(y = m4_S_EY_cbcount_low, color = "Low Counterbalance")) +
+  geom_line(aes(y = m4_S_EY_cbcount_high, color = "High Counterbalance")) +
+  geom_ribbon(aes(ymin = m4_S_CI_cbcount_low_1, 
+                  ymax = m4_S_CI_cbcount_low_2, group = 1), 
+              fill = "blue", alpha = 0.5) +
+  geom_ribbon(aes(ymin = m4_S_CI_cbcount_high_1, 
+                  ymax = m4_S_CI_cbcount_high_2, group = 1), 
+              fill = "red", alpha = 0.5) +
+  labs(x = "Secret Police", 
+       y = "Predicted No. of Selective Repression Events", 
+       title = "Predicted Probabilities of Repression Pattern") +
+  scale_color_manual(values = c("Low Counterbalance" = "blue", 
+                                "High Counterbalance" = "red"),
+                     labels = c("Low Counterbalance" = "Low Counterbalance", 
+                                "High Counterbalance" = "High Counterbalance ")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+plot_m4_S
+```
+
+```{r}
+# Create the histogram plot
+hist_plot1 <- ggplot(merged_df, aes(x = secretpol_revised)) +
+  geom_histogram(fill = "grey", alpha = 0.5) +
+  labs(x = NULL, y = NULL) +
+  theme_minimal() +
+  theme(plot.title = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank())
+
+# Combine the plots using cowplot
+combined_plot1 <- plot_grid(plot_m4_S, hist_plot1, 
+                           ncol = 1, align = "v", rel_heights = c(0.85, 0.15))
+combined_plot1
+```
+
+## Indiscriminate
+
+```{r}
+nsim = 1000
+secretpol_revised_seq <- seq(0,1)
+
+coef_m4_I <- coef(m4_I)
+vcov_m4_I <- vcov(m4_I)
+c_obj_m4_I <- sim(fit = m4_I, n= nsim, vcov = vcov_m4_I, coefs= coef_m4_I)
+
+# Define the values for the scenario
+low_cbcount_T <- 0.1*max(merged_df$cbcount)
+high_cbcount_T <- 0.9*max(merged_df$cbcount)
+
+# Scenarios
+ExpValues_low_m4_I <- sim_setx(c_obj_m4_I, 
+                               x = list(secretpol_revised = secretpol_revised_seq,
+                                        cbcount = low_cbcount_T),
+                               verbose = FALSE)
+saveRDS(ExpValues_low_m4_I, file = "ExpValues_low_m4_I.RDS")
+
+ExpValues_high_m4_I <- sim_setx(c_obj_m4_I,
+                                x = list(secretpol_revised = secretpol_revised_seq,
+                                         cbcount = high_cbcount_T),
+                                verbose = FALSE)
+saveRDS(ExpValues_high_m4_I, file = "ExpValues_high_m4_I.RDS")
+```
+```{r}
+ExpValues_low_m4_I <- readRDS("ExpValues_low_m4_I.RDS")
+ExpValues_high_m4_I <- readRDS("ExpValues_high_m4_I.RDS")
+
+# Quantiles, we again use apply and our quants.mean.fun
+quants_low <- apply(ExpValues_low_m4_I, 2, quants_mean_fun) #Blue
+quants_high <- apply(ExpValues_high_m4_I, 2, quants_mean_fun) #Red
+
+# Create data frame for plotting
+plot_data2 <- data.frame(secretpol_revised_seq, 
+                        quants_low[3,], 
+                        quants_high[3,],
+                        quants_low[1 ,],
+                        quants_low[2 ,],
+                        quants_high[1 ,],
+                        quants_high[2 ,])
+
+# Rename the columns
+colnames(plot_data2) <- c("secretpol_revised", "m4_I_EY_cbcount_low", "m4_I_EY_cbcount_high",
+                         "m4_I_CI_cbcount_low_1", "m4_I_CI_cbcount_low_2",
+                         "m4_I_CI_cbcount_high_1", "m4_I_CI_cbcount_high_2")
+
+# Plot using ggplot
+plot_m4_I <- ggplot(plot_data2, aes(x = secretpol_revised)) +
+  geom_line(aes(y = m4_I_EY_cbcount_low, color = "Low Counterbalance")) +
+  geom_line(aes(y = m4_I_EY_cbcount_high, color = "High Counterbalance")) +
+  geom_ribbon(aes(ymin = m4_I_CI_cbcount_low_1, 
+                  ymax = m4_I_CI_cbcount_low_2, group = 1), 
+              fill = "blue", alpha = 0.5) +
+  geom_ribbon(aes(ymin = m4_I_CI_cbcount_high_1, 
+                  ymax = m4_I_CI_cbcount_high_2, group = 1), 
+              fill = "red", alpha = 0.5) +
+  labs(x = "Secret Police", 
+       y = "Predicted No. of Indiscriminate Repression Events",
+       title = "") +
+  scale_color_manual(values = c("Low Counterbalance" = "blue", 
+                                "High Counterbalance" = "red"),
+                     labels = c("Low Counterbalance" = "Low Counterbalance", 
+                                "High Counterbalance" = "High Counterbalance ")) +
+  ylim(-375, 175) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+plot_m4_I
+```
+```{r}
+# Create the histogram plot
+hist_plot2 <- ggplot(merged_df, aes(x = secretpol_revised)) +
+  geom_histogram(fill = "grey", alpha = 0.5) +
+  labs(x = NULL, y = NULL) +
+  theme_minimal() +
+  theme(plot.title = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank())
+
+# Combine the plots using cowplot
+combined_plot2 <- plot_grid(plot_m4_I, hist_plot2, 
+                           ncol = 1, align = "v", rel_heights = c(0.85, 0.15))
+
+combined_plot2
+```
+
+## Summary A1
+```{r}
+combinedplot_TypeA <- cowplot::plot_grid(plot_m4_S, plot_m4_I, ncol = 2)
+combinedplot_TypeA
+```
+## Summary A2
+```{r}
+plot_data_A <- merge(plot_data1, plot_data2, by = "secretpol_revised")
+
+# Plot using ggplot
+plot_A <- ggplot(plot_data_A, aes(x = secretpol_revised)) +
+  geom_line(aes(y = m4_S_EY_cbcount_low, color = "Selective Repression (Low CB)")) +
+  geom_line(aes(y = m4_S_EY_cbcount_high, color = "Selective Repression (High CB)")) +
+  geom_ribbon(aes(ymin = m4_S_CI_cbcount_low_1, 
+                  ymax = m4_S_CI_cbcount_low_2, group = 1), 
+              fill = "skyblue", alpha = 0.5) +
+  geom_ribbon(aes(ymin = m4_S_CI_cbcount_high_1, 
+                  ymax = m4_S_CI_cbcount_high_2, group = 1), 
+              fill = "blue", alpha = 0.5) +
+  
+  geom_line(aes(y = m4_I_EY_cbcount_low, color = "Indiscriminate Repression (Low CB)")) +
+  geom_line(aes(y = m4_I_EY_cbcount_high, color = "Indiscriminate Repression (High CB)")) +
+  geom_ribbon(aes(ymin = m4_I_CI_cbcount_low_1, 
+                  ymax = m4_I_CI_cbcount_low_2, group = 1), 
+              fill = "purple", alpha = 0.5) +
+  geom_ribbon(aes(ymin = m4_I_CI_cbcount_high_1, 
+                  ymax = m4_I_CI_cbcount_high_2, group = 1), 
+              fill = "red", alpha = 0.5) +
+  
+  geom_hline(yintercept = 0, linetype = "dotted", color = "black") +
+  
+  labs(x = "Secret Police", 
+       y = "Predicted Number of Repression Events", 
+       title = "Predicted Probabilities of Repression Pattern") +
+  
+  scale_color_manual(values = c("Selective Repression (Low CB)" = "skyblue", 
+                                "Selective Repression (High CB)" = "blue",
+                                "Indiscriminate Repression (Low CB)" = "purple",
+                                "Indiscriminate Repression (High CB)" = "red"
+                                ),
+                     labels = c("Selective Repression (Low CB)" = "Selective Repression (Low CB)", 
+                                "Selective Repression (High CB)" = "Selective Repression (High CB)",
+                                "Indiscriminate Repression (Low CB)" = "Indiscriminate Repression (Low CB)",
+                                "Indiscriminate Repression (High CB)" = "Indiscriminate Repression (High CB)" ) ) +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+final_plot_A <- cowplot::plot_grid(plot_A, hist_plot2, 
+                           ncol = 1, rel_heights = c(0.85, 0.15))
+
+final_plot_A
+```
+
+
+# Plots - Type B
+```{r}
+# Extract the mean values
+quants_mean_fun <-  function(x) {
+  c(quants = quantile(x, probs = c(0.025, 0.975)),
+    mean = mean(x)) }
+```
+
+## Selective
+
+```{r Sim_setx}
+nsim = 1000
+cbcount_seq <- seq(min(merged_df$cbcount),
+                   max(merged_df$cbcount),2 )
+
+coef_m4_S <- coef(m4_S)
+vcov_m4_S <- vcov(m4_S)
+c_obj_m4_S <- sim(fit = m4_S, n= nsim, vcov = vcov_m4_S, coefs= coef_m4_S)
+
+# Define the values for the scenario
+no_SP <- 0
+yes_SP <- 1
+
+# Scenarios
+ExpValues_m4_S_low <- sim_setx(c_obj_m4_S, 
+                               x = list(cbcount = cbcount_seq,
+                                        secretpol_revised = no_SP),
+                               verbose = FALSE)
+saveRDS(ExpValues_m4_S_low, file = "ExpValues_m4_S_low.RDS")
+
+ExpValues_m4_S_high <- sim_setx(c_obj_m4_S,
+                                x = list(cbcount = cbcount_seq,
+                                         secretpol_revised = yes_SP),
+                                verbose = FALSE)
+saveRDS(ExpValues_m4_S_high, file = "ExpValues_m4_S_high.RDS")
+```
+
+
+```{r Sim_setx}
+ExpValues_m4_S_low <- readRDS("ExpValues_m4_S_low.RDS")
+ExpValues_m4_S_high <- readRDS("ExpValues_m4_S_high.RDS")
+
+
+# Quantiles, we again use apply and our quants.mean.fun
+quants_low <- apply(ExpValues_m4_S_low, 2, quants_mean_fun) #Blue
+quants_high <- apply(ExpValues_m4_S_high, 2, quants_mean_fun) #Red
+
+# Create data frame for plotting
+plot_data3 <- data.frame(cbcount_seq, 
+                        quants_low[3,], 
+                        quants_high[3,],
+                        quants_low[1 ,],
+                        quants_low[2 ,],
+                        quants_high[1 ,],
+                        quants_high[2 ,])
+
+# Rename the columns
+colnames(plot_data3) <- c("cbcount_seq", "m4S_EY_low", "m4S_EY_high",
+                         "m4S_CI_low_1", "m4S_CI_low_2",
+                         "m4S_CI_high_1", "m4S_CI_high_2")
+
+# Plot using ggplot
+plot_m4_S <- ggplot(plot_data3, aes(x = cbcount_seq)) +
+  geom_line(aes(y = m4S_EY_low, color = "No Secret Police")) +
+  geom_line(aes(y = m4S_EY_high, color = "Secret Police")) +
+  geom_ribbon(aes(ymin = m4S_CI_low_1, 
+                  ymax = m4S_CI_low_2, group = 1), 
+              fill = "blue", alpha = 0.5) +
+  geom_ribbon(aes(ymin = m4S_CI_high_1, 
+                  ymax = m4S_CI_high_2, group = 1), 
+              fill = "red", alpha = 0.5) +
+  labs(x = "Number of Counterbalance", 
+       y = "Predicted No. of Selective Repression Events", 
+       title = "Predicted Probabilities of Repression Pattern") +
+  scale_color_manual(values = c("No Secret Police" = "blue", 
+                                "Secret Police" = "red"),
+                     labels = c("No Secret Police" = "No Secret Police", 
+                                "Secret Police" = "Secret Police ")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+
+# Create the histogram plot
+hist_plot3 <- ggplot(merged_df, aes(x = cbcount)) +
+  geom_histogram(fill = "grey", alpha = 0.5) +
+  labs(x = NULL, y = NULL) +
+  theme_minimal() +
+  theme(plot.title = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank())
+
+# Combine the plots using cowplot
+combined_plot3 <- cowplot::plot_grid(plot_m4_S, hist_plot3, 
+                           ncol = 1, align = "v", rel_heights = c(0.85, 0.15))
+
+combined_plot3
+```
+
+## Indiscriminate
+
+```{r Sim_setx}
+nsim = 1000
+cbcount_seq <- seq(min(merged_df$cbcount),
+                   max(merged_df$cbcount),2 )
+
+coef_m4_I <- coef(m4_I)
+vcov_m4_I <- vcov(m4_I)
+c_obj_m4_I <- sim(fit = m4_I, n= nsim, vcov = vcov_m4_I, coefs= coef_m4_I)
+
+# Define the values for the scenario
+no_SP <- 0
+yes_SP <- 1
+
+# Scenarios
+ExpValues_m4_I_low <- sim_setx(c_obj_m4_I, 
+                               x = list(cbcount = cbcount_seq,
+                                        secretpol_revised = no_SP),
+                               verbose = FALSE)
+saveRDS(ExpValues_m4_I_low, file = "ExpValues_m4_I_low.RDS")
+
+ExpValues_m4_I_high <- sim_setx(c_obj_m4_I,
+                                x = list(cbcount = cbcount_seq,
+                                         secretpol_revised = yes_SP),
+                                verbose = FALSE)
+saveRDS(ExpValues_m4_I_high, file = "ExpValues_m4_I_high.RDS")
+```
+
+
+```{r Sim_setx}
+ExpValues_m4_I_low <- readRDS("ExpValues_m4_I_low.RDS")
+ExpValues_m4_I_high <- readRDS("ExpValues_m4_I_high.RDS")
+
+# Quantiles, we again use apply and our quants.mean.fun
+quants_low <- apply(ExpValues_m4_I_low, 2, quants_mean_fun) #Blue
+quants_high <- apply(ExpValues_m4_I_high, 2, quants_mean_fun) #Red
+
+# Create data frame for plotting
+plot_data4 <- data.frame(cbcount_seq, 
+                        quants_low[3,], 
+                        quants_high[3,],
+                        quants_low[1 ,],
+                        quants_low[2 ,],
+                        quants_high[1 ,],
+                        quants_high[2 ,])
+
+# Rename the columns
+colnames(plot_data4) <- c("cbcount_seq", "m4I_EY_low", "m4I_EY_high",
+                         "m4I_CI_low_1", "m4I_CI_low_2",
+                         "m4I_CI_high_1", "m4I_CI_high_2")
+
+# Plot using ggplot
+plot_m4_I <- ggplot(plot_data4, aes(x = cbcount_seq)) +
+  geom_line(aes(y = m4I_EY_low, color = "No Secret Police")) +
+  geom_line(aes(y = m4I_EY_high, color = "Secret Police")) +
+  geom_ribbon(aes(ymin = m4I_CI_low_1, 
+                  ymax = m4I_CI_low_2, group = 1), 
+              fill = "blue", alpha = 0.5) +
+  geom_ribbon(aes(ymin = m4I_CI_high_1, 
+                  ymax = m4I_CI_high_2, group = 1), 
+              fill = "red", alpha = 0.5) +
+  labs(x = "Number of Counterbalance", 
+       y = "Predicted No. of Indiscriminate Repression Events", 
+       title = "") +
+  ylim(-375, 275) +
+  scale_color_manual(values = c("No Secret Police" = "blue", 
+                                "Secret Police" = "red"),
+                     labels = c("No Secret Police" = "No Secret Police", 
+                                "Secret Police" = "Secret Police ")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+
+# Create the histogram plot
+hist_plot4 <- ggplot(merged_df, aes(x = cbcount)) +
+  geom_histogram(fill = "grey", alpha = 0.5) +
+  labs(x = NULL, y = NULL) +
+  theme_minimal() +
+  theme(plot.title = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank())
+
+# Combine the plots using cowplot
+combined_plot4 <- cowplot::plot_grid(plot_m4_I, hist_plot4, 
+                           ncol = 1, align = "v", rel_heights = c(0.85, 0.15))
+
+combined_plot4
+```
+
+## Summary B1
+
+```{r}
+combinedplot_TypeB <- cowplot::plot_grid(combined_plot3, combined_plot4, ncol = 2)
+combinedplot_TypeB
+```
+
+## Summary B2
+```{r}
+plot_data_B <- merge(plot_data3, plot_data4, by = "cbcount_seq")
+
+# Plot using ggplot
+plot_B <- ggplot(plot_data_B, aes(x = cbcount_seq)) +
+  geom_line(aes(y = m4S_EY_low, color = "Selective Repression (no SP)")) +
+  geom_ribbon(aes(ymin = m4S_CI_low_1, 
+                  ymax = m4S_CI_low_2, group = 1), 
+              fill = "skyblue", alpha = 0.5) +
+  
+  geom_line(aes(y = m4S_EY_high, color = "Selective Repression (SP exist)")) +
+  geom_ribbon(aes(ymin = m4S_CI_high_1, 
+                  ymax = m4S_CI_high_2, group = 1), 
+              fill = "blue", alpha = 0.5) +
+  
+  geom_line(aes(y = m4I_EY_low, color = "Indiscriminate Repression (no SP)")) +
+  geom_ribbon(aes(ymin = m4I_CI_low_1, 
+                  ymax = m4I_CI_low_2, group = 1), 
+              fill = "purple", alpha = 0.5) +
+  
+  geom_line(aes(y = m4I_EY_high, color = "Indiscriminate Repression (SP exist)")) +
+  geom_ribbon(aes(ymin = m4I_CI_high_1, 
+                  ymax = m4I_CI_high_2, group = 1), 
+              fill = "red", alpha = 0.5) +
+  
+  labs(x = "Number of Counterbalance", 
+       y = "Predicted Number of Repression Events", 
+       title = "Predicted Probabilities of Repression Pattern") +
+  
+  scale_color_manual(values = c("Selective Repression (no SP)" = "skyblue", 
+                                "Selective Repression (SP exist)" = "blue",
+                                "Indiscriminate Repression (no SP)" = "purple",
+                                "Indiscriminate Repression (SP exist)" = "red"
+                                ),
+                     labels = c("Selective Repression (no SP)" = "Selective (No Secret Police)", 
+                                "Selective Repression (SP exist)" = "Selective (Secret Police)",
+                                "Indiscriminate Repression (no SP)" = "Indiscriminate (No Secret Police)",
+                                "Indiscriminate Repression (SP exist)" = "Indiscriminate (Secret Police)")) +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+final_plot_B <- cowplot::plot_grid(plot_B, hist_plot4, 
+                           ncol = 1, align = "v", rel_heights = c(0.85, 0.15))
+
+final_plot_B
+```
+# Plot - Type C1
+
+```{r}
+S_low_cbcount <- plot(ExpValues_low_m4_S)
+S_high_cbcount<- plot(ExpValues_high_m4_S)
+I_low_cbcount<- plot(ExpValues_low_m4_I)
+I_high_cbcount<- plot(ExpValues_high_m4_I)
+
+plot_grid(S_low_cbcount, S_high_cbcount,
+          I_low_cbcount, I_high_cbcount,
+          ncol = 2)
+
+final_plot_C <- cowplot::plot_grid(S_low_cbcount, S_high_cbcount,
+                                   I_low_cbcount, I_high_cbcount, ncol = 2)
+```
+# Plot - Type C2
+```{r}
+df_ExpValues_low_m4_S <- as.data.frame(ExpValues_low_m4_S) %>% 
+  rename(S_0_cb_low = `secretpol_revised = 0`,
+         S_1_cb_low = `secretpol_revised = 1`)
+
+df_ExpValues_high_m4_S <- as.data.frame(ExpValues_high_m4_S) %>% 
+  rename(S_0_cb_high = `secretpol_revised = 0`,
+         S_1_cb_high = `secretpol_revised = 1`)
+
+df_ExpValues_low_m4_I <- as.data.frame(ExpValues_low_m4_I) %>% 
+  rename(I_0_cb_low = `secretpol_revised = 0`,
+         I_1_cb_low = `secretpol_revised = 1`)
+
+df_ExpValues_high_m4_I <- as.data.frame(ExpValues_high_m4_I) %>% 
+  rename(I_0_cb_high = `secretpol_revised = 0`,
+         I_1_cb_high = `secretpol_revised = 1`)
+
+df_ExpValues <- cbind(df_ExpValues_low_m4_S, 
+                      df_ExpValues_high_m4_S,
+                      df_ExpValues_low_m4_I,
+                      df_ExpValues_high_m4_I)
+df_ExpValues %>% 
+  ggplot(aes(x = factor(1), y = S_0_cb_low)) +
+  geom_boxplot() +
+  geom_boxplot(aes(x = factor(2), y = S_1_cb_low)) +
+  geom_boxplot(aes(x = factor(3), y = S_0_cb_high)) +
+  geom_boxplot(aes(x = factor(4), y = S_1_cb_high)) +
+  geom_boxplot(aes(x = factor(5), y = I_0_cb_low)) +
+  geom_boxplot(aes(x = factor(6), y = I_1_cb_low)) +
+  geom_boxplot(aes(x = factor(7), y = I_0_cb_high)) +
+  geom_boxplot(aes(x = factor(8), y = I_1_cb_high)) +
+  scale_x_discrete(labels = c('...', '...')) +
+  labs(x = "", y = "Predicted Number of Repression Events") +
+  ggtitle("Boxplots for Predicted Probabilities of Repression Patterns")
+```
+
+```{r}
+Boxplot_final1 <- df_ExpValues %>%
+  ggplot(aes(x = factor(1), y = S_0_cb_low, fill = "S_0_cb_low")) +
+  geom_boxplot(show.legend = FALSE) +
+  geom_boxplot(aes(x = factor(2), y = S_1_cb_low, fill = "S_1_cb_low")) +
+  geom_boxplot(aes(x = factor(3), y = S_0_cb_high, fill = "S_0_cb_high")) +
+  geom_boxplot(aes(x = factor(4), y = S_1_cb_high, fill = "S_1_cb_high")) +
+  geom_boxplot(aes(x = factor(5), y = I_0_cb_low, fill = "I_0_cb_low")) +
+  geom_boxplot(aes(x = factor(6), y = I_1_cb_low, fill = "I_1_cb_low")) +
+  geom_boxplot(aes(x = factor(7), y = I_0_cb_high, fill = "I_0_cb_high")) +
+  geom_boxplot(aes(x = factor(8), y = I_1_cb_high, fill = "I_1_cb_high")) +
+  scale_x_discrete(labels = c('No SP', 'SP', 'No SP', 'SP',
+                              'No SP', 'SP', 'No SP', 'SP')) +
+  geom_hline(yintercept = 0, linetype = "dotted", color = "black") +  
+  labs(x = "Selective Repression                                                                     Indiscriminate Repression", 
+       y = "Predicted Number of Repression Events",
+       title = "Boxplots for Predicted Probabilities of Repression Pattern") +
+
+  scale_fill_manual(values = c("S_0_cb_low" = "skyblue",
+                              "S_1_cb_low" = "skyblue",
+                              "S_0_cb_high" = "blue",
+                              "S_1_cb_high" = "blue",
+                              "I_0_cb_low" = "purple",
+                              "I_1_cb_low" = "purple",
+                              "I_0_cb_high" = "red",
+                              "I_1_cb_high" = "red"), name = "Legend",
+                    labels = c("S_0_cb_low" = "Custom Label 1",
+                               "S_1_cb_low" = "Custom Label 2",
+                               "S_0_cb_high" = "Custom Label 3",
+                               "S_1_cb_high" = "Custom Label 4",
+                               "I_0_cb_low" = "Custom Label 5",
+                               "I_1_cb_low" = "Custom Label 6",
+                               "I_0_cb_high" = "Custom Label 7",
+                               "I_1_cb_high" = "Custom Label 8"   ) ) +
+  theme(legend.position = "none") +
+  
+  annotate("text", x = 1.5, y = -500, vjust = 0, label = "Low CB", hjust = 0.5, size = 4) +
+  geom_segment(aes(x = 1, xend = 2, y = -Inf, yend = -Inf), color = "black", size = 3) +
+  
+  annotate("text", x = 3.5, y = -500, vjust = 0, label = "High CB", hjust = 0.5, size = 4) +
+  geom_segment(aes(x = 3, xend = 4, y = -Inf, yend = -Inf), color = "black", size = 3) +
+  
+  annotate("text", x = 5.5, y = -500, vjust = 0, label = "Low CB", hjust = 0.5, size = 4) +
+  geom_segment(aes(x = 5, xend = 6, y = -Inf, yend = -Inf), color = "black", size = 3) +
+    
+  annotate("text", x = 7.5, y = -500, vjust = 0, label = "High CB", hjust = 0.5, size = 4) +
+  geom_segment(aes(x = 7, xend = 8, y = -Inf, yend = -Inf), color = "black", size = 3)
+
+ggsave("Boxplot_final1.jpg", Boxplot_final1, width = 10, height = 5)
+```
+
+```{r}
+Boxplot_final2 <- df_ExpValues %>%
+  ggplot(aes(x = factor(1), y = S_0_cb_low, fill = "S_0_cb_low")) +
+  geom_boxplot(show.legend = FALSE) +
+  geom_boxplot(aes(x = factor(2), y = S_0_cb_high, fill = "S_0_cb_high")) +
+  geom_boxplot(aes(x = factor(3), y = I_0_cb_low, fill = "I_0_cb_low")) +
+  geom_boxplot(aes(x = factor(4), y = I_0_cb_high, fill = "I_0_cb_high")) +
+  
+  geom_boxplot(aes(x = factor(5), y = S_1_cb_low, fill = "S_1_cb_low")) +
+  geom_boxplot(aes(x = factor(6), y = S_1_cb_high, fill = "S_1_cb_high")) +
+  geom_boxplot(aes(x = factor(7), y = I_1_cb_low, fill = "I_1_cb_low")) +
+  geom_boxplot(aes(x = factor(8), y = I_1_cb_high, fill = "I_1_cb_high")) +
+  geom_hline(yintercept = 0, linetype = "dotted", color = "black") +  
+  
+  scale_x_discrete(labels = c('Low CB', 'High CB', 'Low CB', 'High CB',
+                              'Low CB', 'High CB', 'Low CB', 'High CB')) +
+  labs(x = "No Secret Police                                                                                 Secret Police", 
+       y = "Predicted Number of Repression Events",
+       title = "Boxplots for Predicted Probabilities of Repression Pattern") +
+
+  scale_fill_manual(values = c("S_0_cb_low" = "skyblue",
+                               "S_0_cb_high" = "blue",
+                               "I_0_cb_low" = "purple",
+                               "I_1_cb_high" = "red",
+                               "S_1_cb_low" = "skyblue",
+                               "S_1_cb_high" = "blue",
+                               "I_1_cb_low" = "purple",
+                               "I_0_cb_high" = "red"), name = "Legend") + 
+  theme(legend.position = "none") +
+  
+  annotate("text", x = 1.5, y = -500, vjust = 0, label = "Selective", hjust = 0.5, size = 4) +
+  geom_segment(aes(x = 1, xend = 2, y = -Inf, yend = -Inf), color = "black", size = 3) +
+  
+  annotate("text", x = 3.5, y = -500, vjust = 0, label = "Indiscriminate", hjust = 0.5, size = 4) +
+  geom_segment(aes(x = 3, xend = 4, y = -Inf, yend = -Inf), color = "black", size = 3) +
+  
+  annotate("text", x = 5.5, y = -500, vjust = 0, label = "Selective", hjust = 0.5, size = 4) +
+  geom_segment(aes(x = 5, xend = 6, y = -Inf, yend = -Inf), color = "black", size = 3) +
+    
+  annotate("text", x = 7.5, y = -500, vjust = 0, label = "Indiscriminate", hjust = 0.5, size = 4) +
+  geom_segment(aes(x = 7, xend = 8, y = -Inf, yend = -Inf), color = "black", size = 3)
+
+ggsave("Boxplot_final2.jpg", Boxplot_final2, width = 10, height = 5)
+```
+
+
+```{r}
+
+plot_data1_long <- plot_data1 %>%
+  pivot_longer(cols = starts_with("m4_"), names_to = "Variable", values_to = "Value") %>%
+  separate(Variable, into = c("Category", "EY_cbcount", "cbcount_type", "index", "bound"), sep = "_") %>% 
+  pivot_wider(names_from = c("cbcount_type","bound"), values_from = "Value") %>% 
+  select(-Category, -EY_cbcount, -index) %>% 
+  unnest(cols = c(CI_low, CI_high)) %>%
+  mutate(EY = ifelse(row_number() %% 2 == 1, EY_low, EY_high)) %>% 
+  select(secretpol_revised, EY, CI_low, CI_high) %>% 
+  rename(mean = EY) %>% 
+  mutate(secretpol_revised = paste0(secretpol_revised, "_", ifelse(row_number() %% 2 == 1, "low", "high"))) %>%
+  pivot_wider(names_from = secretpol_revised, values_from = c(mean, CI_low, CI_high))
+
+
+ggplot(plot_data1_long, aes(y = X1)) +
+  geom_boxplot() +
+  labs(title = "Boxplot of Data", y = "Values")
+
+```
+
+
+# SAVE
+
+```{r}
+ggsave("Plot_1.jpg", combined_plot1)
+
+ggsave("Plot_2.jpg", combined_plot2)
+
+ggsave("Plot_3.jpg", combined_plot3)
+ggsave("Plot_4.jpg", combined_plot4)
+
+ggsave("Plot_combined_A1.jpg", combinedplot_TypeA)
+ggsave("Plot_combined_B1.jpg", combinedplot_TypeB)
+
+ggsave("Plot_finalA.jpg", plot_A, width = 10, height = 7)
+ggsave("Plot_finalB.jpg", final_plot_B)
+ggsave("Plot_finalC.jpg", final_plot_C, width = 10, height = 7)
+
+
+ggsave("Boxplot_final.jpg", Boxplot_final, width = 10, height = 5)
+
+```
